@@ -25,7 +25,7 @@ asset. Each binary release also carries checksums, qualification evidence,
 license notices, and the corresponding locked source/patch material required
 to reconstruct redistributed compiler components.
 
-This bootstrap tree intentionally contains unsigned empty channels until the
-protected release key is created and pinned in ps2swift/swiftPlay2ground. Do
-not publish this template as a live update source before both empty channel
-files have valid detached signatures.
+The empty channel pointers are signed as well. This lets clients distinguish
+an authentic “no release yet” response from unsigned or substituted metadata.
+`scripts/verify-channel-signatures.mjs` binds both files to the public key under
+`keys/` on every pull request and default-branch push.

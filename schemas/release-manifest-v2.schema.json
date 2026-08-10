@@ -80,11 +80,12 @@
     "compilerMirror": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["branch", "commit", "tag", "tree"],
+      "required": ["branch", "commit", "tag", "tagObject", "tree"],
       "properties": {
         "branch": { "type": "string", "minLength": 1 },
         "commit": { "$ref": "#/$defs/gitObject" },
         "tag": { "type": "string", "minLength": 1 },
+        "tagObject": { "$ref": "#/$defs/gitObject" },
         "tree": { "$ref": "#/$defs/gitObject" }
       }
     },
@@ -99,7 +100,7 @@
       }
     },
     "signingKeyID": { "type": "string", "minLength": 1 },
-    "target": { "type": "object" },
+    "target": { "$ref": "#/$defs/target" },
     "package": {
       "type": "object",
       "additionalProperties": false,
@@ -142,6 +143,36 @@
         { "required": ["revision"] },
         { "required": ["releaseTag", "archiveSha256"] }
       ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "triple",
+        "cpu",
+        "abi",
+        "elfClass",
+        "endianness",
+        "pointerWidth",
+        "integerWidth",
+        "gprWidth",
+        "floatingPointABI",
+        "smallDataThreshold",
+        "linkage"
+      ],
+      "properties": {
+        "triple": { "const": "mips64el-scei-ps2" },
+        "cpu": { "const": "r5900" },
+        "abi": { "const": "n32" },
+        "elfClass": { "const": "ELF32" },
+        "endianness": { "const": "little" },
+        "pointerWidth": { "const": 32 },
+        "integerWidth": { "const": 32 },
+        "gprWidth": { "const": 64 },
+        "floatingPointABI": { "const": "hard-single" },
+        "smallDataThreshold": { "const": 0 },
+        "linkage": { "const": "static" }
+      }
     }
   }
 }
