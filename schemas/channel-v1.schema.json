@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/OpenCow42/swiftps2lchains/main/schemas/channel-v1.schema.json",
+  "title": "SwiftPS2 signed channel",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "channel", "generatedAt", "signingKeyID", "release"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "channel": { "enum": ["stable", "preview"] },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "signingKeyID": { "type": "string", "minLength": 1 },
+    "release": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "manifestURL", "manifestSignatureURL", "manifestSHA256"],
+          "properties": {
+            "version": { "type": "string", "minLength": 5 },
+            "manifestURL": { "type": "string", "format": "uri", "pattern": "^https://" },
+            "manifestSignatureURL": { "type": "string", "format": "uri", "pattern": "^https://" },
+            "manifestSHA256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      ]
+    }
+  }
+}

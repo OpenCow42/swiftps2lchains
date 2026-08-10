@@ -1,0 +1,33 @@
+name: Validate channel metadata
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate empty or complete channel pointers
+        run: |
+          for channel in stable preview; do
+            jq -e --arg channel "$channel" '
+              .schemaVersion == 1 and
+              .channel == $channel and
+              (.signingKeyID | length > 0) and
+              (.release == null or (
+                (.release.version | length > 0) and
+                (.release.manifestURL | startswith("https://")) and
+                (.release.manifestSignatureURL | startswith("https://")) and
+                (.release.manifestSHA256 | test("^[0-9a-f]{64}$"))
+              ))
+            ' "channels/$channel.json"
+          done
+      - name: Require detached signatures after key bootstrap
+        if: ${{ vars.SWIFTPS2_SIGNING_ENABLED == 'true' }}
+        run: test -s channels/stable.json.sig && test -s channels/preview.json.sig
