@@ -1,13 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/OpenCow42/swiftps2lchains/main/schemas/release-manifest-v1.schema.json",
-  "title": "SwiftPS2 SDK release manifest",
+  "$id": "https://raw.githubusercontent.com/OpenCow42/swiftps2lchains/main/schemas/release-manifest-v2.schema.json",
+  "title": "SwiftPS2 complete suite release manifest",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schemaVersion",
     "releaseVersion",
-    "sdkVersion",
+    "suiteVersion",
+    "swiftSDKVersion",
+    "rustSDKVersion",
     "buildID",
     "channel",
     "qualification",
@@ -16,6 +18,7 @@
     "hostTriples",
     "minimumAppVersion",
     "archive",
+    "sourceArchive",
     "packageManifestSha256",
     "ps2devContractSha256",
     "components",
@@ -26,9 +29,11 @@
     "package"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "releaseVersion": { "type": "string", "minLength": 5 },
-    "sdkVersion": { "type": "string", "minLength": 5 },
+    "schemaVersion": { "const": 2 },
+    "releaseVersion": { "$ref": "#/$defs/semver" },
+    "suiteVersion": { "$ref": "#/$defs/semver" },
+    "swiftSDKVersion": { "$ref": "#/$defs/semver" },
+    "rustSDKVersion": { "$ref": "#/$defs/semver" },
     "buildID": { "type": "string", "minLength": 1 },
     "channel": { "enum": ["stable", "preview"] },
     "qualification": {
@@ -49,31 +54,27 @@
     "hostTriples": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": { "type": "string", "minLength": 1 }
     },
-    "minimumAppVersion": { "type": "string", "minLength": 5 },
-    "archive": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["url", "bytes", "sha256", "format"],
-      "properties": {
-        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
-        "bytes": { "type": "integer", "minimum": 1 },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "format": { "const": "tar.gz" }
-      }
-    },
-    "packageManifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "ps2devContractSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "minimumAppVersion": { "$ref": "#/$defs/semver" },
+    "archive": { "$ref": "#/$defs/archive" },
+    "sourceArchive": { "$ref": "#/$defs/archive" },
+    "packageManifestSha256": { "$ref": "#/$defs/sha256" },
+    "ps2devContractSha256": { "$ref": "#/$defs/sha256" },
     "components": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ps2swift", "llvm", "swift", "cmark"],
+      "required": ["ps2swift", "llvm", "swift", "cmark", "rust", "ps2dev", "ps2sdk", "python"],
       "properties": {
         "ps2swift": { "$ref": "#/$defs/component" },
         "llvm": { "$ref": "#/$defs/component" },
         "swift": { "$ref": "#/$defs/component" },
-        "cmark": { "$ref": "#/$defs/component" }
+        "cmark": { "$ref": "#/$defs/component" },
+        "rust": { "$ref": "#/$defs/component" },
+        "ps2dev": { "$ref": "#/$defs/component" },
+        "ps2sdk": { "$ref": "#/$defs/component" },
+        "python": { "$ref": "#/$defs/component" }
       }
     },
     "compilerMirror": {
@@ -82,9 +83,9 @@
       "required": ["branch", "commit", "tag", "tree"],
       "properties": {
         "branch": { "type": "string", "minLength": 1 },
-        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "commit": { "$ref": "#/$defs/gitObject" },
         "tag": { "type": "string", "minLength": 1 },
-        "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+        "tree": { "$ref": "#/$defs/gitObject" }
       }
     },
     "evidence": {
@@ -92,8 +93,8 @@
       "additionalProperties": false,
       "required": ["url", "sha256", "summary"],
       "properties": {
-        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "url": { "$ref": "#/$defs/httpsURL" },
+        "sha256": { "$ref": "#/$defs/sha256" },
         "summary": { "type": "string", "minLength": 1 }
       }
     },
@@ -104,20 +105,43 @@
       "additionalProperties": false,
       "required": ["artifactID", "version"],
       "properties": {
-        "artifactID": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 5 }
+        "artifactID": { "const": "swiftps2-suite" },
+        "version": { "$ref": "#/$defs/semver" }
       }
     }
   },
   "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "gitObject": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "httpsURL": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "archive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "bytes", "sha256", "format"],
+      "properties": {
+        "url": { "$ref": "#/$defs/httpsURL" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "format": { "const": "tar.gz" }
+      }
+    },
     "component": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["revision"],
       "properties": {
         "revision": { "type": "string", "minLength": 1 },
-        "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
-      }
+        "tree": { "$ref": "#/$defs/gitObject" },
+        "releaseTag": { "type": "string", "minLength": 1 },
+        "archiveSha256": { "$ref": "#/$defs/sha256" }
+      },
+      "anyOf": [
+        { "required": ["revision"] },
+        { "required": ["releaseTag", "archiveSha256"] }
+      ]
     }
   }
 }

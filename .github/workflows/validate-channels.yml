@@ -28,6 +28,7 @@ jobs:
               ))
             ' "channels/$channel.json"
           done
+          jq -e '.properties.schemaVersion.const == 2' schemas/release-manifest-v2.schema.json
       - name: Require detached signatures after key bootstrap
         if: ${{ vars.SWIFTPS2_SIGNING_ENABLED == 'true' }}
         run: test -s channels/stable.json.sig && test -s channels/preview.json.sig
