@@ -5,24 +5,31 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const keyID = "swiftps2-release-1";
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const encodedKey = readFileSync(join(repositoryRoot, "keys", `${keyID}.pub`), "utf8").trim();
-const rawKey = Buffer.from(encodedKey, "base64");
-if (rawKey.length !== 32 || rawKey.toString("base64") !== encodedKey) {
-    throw new Error(`${keyID} must be one canonical raw 32-byte Ed25519 public key`);
-}
-const subjectPublicKeyInfo = Buffer.concat([
-    Buffer.from("302a300506032b6570032100", "hex"),
-    rawKey,
+const channelKeys = new Map([
+    ["stable", "swiftps2-release-1"],
+    ["preview", "swiftps2-release-1"],
+    ["testing", "swiftps2-testing-1"],
 ]);
-const publicKey = createPublicKey({
-    key: subjectPublicKeyInfo,
-    format: "der",
-    type: "spki",
-});
 
-for (const channel of ["stable", "preview"]) {
+for (const [channel, keyID] of channelKeys) {
+    const encodedKey = readFileSync(
+        join(repositoryRoot, "keys", `${keyID}.pub`),
+        "utf8"
+    ).trim();
+    const rawKey = Buffer.from(encodedKey, "base64");
+    if (rawKey.length !== 32 || rawKey.toString("base64") !== encodedKey) {
+        throw new Error(`${keyID} must be one canonical raw 32-byte Ed25519 public key`);
+    }
+    const subjectPublicKeyInfo = Buffer.concat([
+        Buffer.from("302a300506032b6570032100", "hex"),
+        rawKey,
+    ]);
+    const publicKey = createPublicKey({
+        key: subjectPublicKeyInfo,
+        format: "der",
+        type: "spki",
+    });
     const document = readFileSync(join(repositoryRoot, "channels", `${channel}.json`));
     const signatureText = readFileSync(
         join(repositoryRoot, "channels", `${channel}.json.sig`),

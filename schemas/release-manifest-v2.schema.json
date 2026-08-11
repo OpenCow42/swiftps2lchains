@@ -35,14 +35,18 @@
     "swiftSDKVersion": { "$ref": "#/$defs/semver" },
     "rustSDKVersion": { "$ref": "#/$defs/semver" },
     "buildID": { "type": "string", "minLength": 1 },
-    "channel": { "enum": ["stable", "preview"] },
+    "channel": { "enum": ["stable", "preview", "testing"] },
     "qualification": {
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "hardwareQualified", "requiredGate", "caveat"],
       "properties": {
         "status": {
-          "enum": ["production-qualified", "emulator-qualified, hardware-unqualified"]
+          "enum": [
+            "production-qualified",
+            "emulator-qualified, hardware-unqualified",
+            "candidate-unqualified"
+          ]
         },
         "hardwareQualified": { "type": "boolean" },
         "requiredGate": { "type": "string", "minLength": 1 },
@@ -111,6 +115,47 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "channel": { "const": "stable" } } },
+      "then": {
+        "properties": {
+          "qualification": {
+            "properties": {
+              "status": { "const": "production-qualified" },
+              "hardwareQualified": { "const": true }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "channel": { "const": "preview" } } },
+      "then": {
+        "properties": {
+          "qualification": {
+            "properties": {
+              "status": { "const": "emulator-qualified, hardware-unqualified" },
+              "hardwareQualified": { "const": false }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "channel": { "const": "testing" } } },
+      "then": {
+        "properties": {
+          "qualification": {
+            "properties": {
+              "status": { "const": "candidate-unqualified" },
+              "hardwareQualified": { "const": false }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "semver": {
       "type": "string",
