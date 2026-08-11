@@ -54,10 +54,20 @@ jobs:
       - name: Build with the published compiler suite
         run: |
           cd "$SWIFTPS2_CI_CHECKOUT"
+          mkdir -p "$SWIFTPS2_CI_CHECKOUT/tmp"
+          export TMPDIR="$SWIFTPS2_CI_CHECKOUT/tmp"
           ./scripts/swiftps2-demo --profile release-scalar
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           cp artifacts/moving-colors.elf artifacts/moving-colors.elf.manifest.json \
             "$GITHUB_WORKSPACE/artifacts/"
+      - name: Diagnose rejected developer paths
+        if: failure()
+        run: |
+          find "$SWIFTPS2_CI_CHECKOUT/.swiftps2/build" -name '*.elf' -type f -print0 | \
+            while IFS= read -r -d '' elf; do
+              echo "ELF: $elf"
+              strings -a "$elf" | grep -F -C 3 '/Users/runner' || true
+            done
       - name: Verify the published R5900 ELF
         run: |
           test -f artifacts/moving-colors.elf
