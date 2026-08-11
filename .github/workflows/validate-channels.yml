@@ -45,8 +45,19 @@ jobs:
           test "$(uname -m)" = arm64
           ./scripts/swiftps2-demo --help
           xcrun swift tests/test-swiftps2-demo.swift
+      - name: Prepare a home-independent public checkout
+        run: |
+          ci_checkout="/tmp/swiftps2lchains-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$ci_checkout"
+          git archive HEAD | tar -x -C "$ci_checkout"
+          echo "SWIFTPS2_CI_CHECKOUT=$ci_checkout" >> "$GITHUB_ENV"
       - name: Build with the published compiler suite
-        run: ./scripts/swiftps2-demo
+        run: |
+          cd "$SWIFTPS2_CI_CHECKOUT"
+          ./scripts/swiftps2-demo
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp artifacts/moving-colors.elf artifacts/moving-colors.elf.manifest.json \
+            "$GITHUB_WORKSPACE/artifacts/"
       - name: Verify the published R5900 ELF
         run: |
           test -f artifacts/moving-colors.elf
