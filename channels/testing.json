@@ -1,11 +1,11 @@
 {
   "channel": "testing",
-  "generatedAt": "2026-08-11T07:46:07Z",
+  "generatedAt": "2026-08-11T16:36:00Z",
   "release": {
-    "manifestSHA256": "f6c5edaab67a5c3f5a1808f60da7d453bdd8bd07e3e1ce2338222ada8fc9db2e",
-    "manifestSignatureURL": "https://github.com/OpenCow42/swiftps2lchains/releases/download/0.4.0-testing.3/release-manifest.sig",
-    "manifestURL": "https://github.com/OpenCow42/swiftps2lchains/releases/download/0.4.0-testing.3/release-manifest.json",
-    "version": "0.4.0-testing.3"
+    "manifestSHA256": "ad33cd4dd3920dbcbc2a35e915590f496e0b530de3cfc7685523cc4d065dfba5",
+    "manifestSignatureURL": "https://github.com/OpenCow42/swiftps2lchains/releases/download/0.4.0-testing.4/release-manifest.sig",
+    "manifestURL": "https://github.com/OpenCow42/swiftps2lchains/releases/download/0.4.0-testing.4/release-manifest.json",
+    "version": "0.4.0-testing.4"
   },
   "schemaVersion": 1,
   "signingKeyID": "swiftps2-testing-1"
