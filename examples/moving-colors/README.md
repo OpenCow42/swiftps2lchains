@@ -1,23 +1,26 @@
 # Moving Colors
 
 This is the original SwiftPS2 hello-world scene. Swift owns the PlayStation 2
-entry point and drives an infinite animation through the public `PS2Kernel`
-and `PS2GS` overlays. The background color and foreground square move every
-frame.
+entry point, frame progression, color calculation, and foreground-rectangle
+construction through the public `PS2Kernel` and `PS2GS` overlays. The native
+boundary retains GS lifecycle, GIF packet encoding, DMA submission, and vsync.
 
-Build it with the signed compiler suite published by this repository:
+This source-only branch requires a matching unreleased SwiftPS2 SDK containing
+the bounded `Color`, `Rectangle`, and `Graphics.drawRectangle` API. It is not
+compatible with the currently published Testing SDK and must be released with
+that SDK change.
+
+Build it from a local checkout of the matching SwiftPS2 SDK. Rebuild its local
+artifact bundle so it includes the unreleased `PS2GS` overlay API:
 
 ```sh
-./scripts/swiftps2-demo
+/path/to/ps2swift/scripts/swiftps2 build \
+  --rebuild-toolchain \
+  --package /path/to/swiftps2lchains/examples/moving-colors \
+  --profile debug-emulator \
+  --output /tmp/moving-colors
 ```
 
-The audited ELF and its build manifest are written to `artifacts/`. To launch
-the ELF after building, configure a BIOS in PCSX2 and run:
-
-```sh
-./scripts/swiftps2-demo --run
-```
-
-The current Testing SDK is a public consumer fixture marked
-`candidate-unqualified`; using this example does not promote it to Preview or
-Stable.
+The resulting ELF and build manifest are written below `/tmp/moving-colors`.
+After the coordinated SDK is published, this example can return to the
+repository's signed `./scripts/swiftps2-demo` quick-start flow.
