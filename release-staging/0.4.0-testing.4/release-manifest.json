@@ -1,0 +1,95 @@
+{
+  "archive": {
+    "bytes": 596602825,
+    "format": "tar.gz",
+    "sha256": "3192ad0a332d826ba080a17246d62ce2dc0e89281c9a0ae63b907951836dfadd",
+    "url": "https://github.com/OpenCow42/swiftps2lchains/releases/download/0.4.0-testing.4/swiftps2-0.4.0-testing.4-arm64-apple-macosx13.0-suite.tar.gz"
+  },
+  "buildID": "4a156be20b035dfb9e800dcc",
+  "channel": "testing",
+  "compatibilityID": "swiftps2-suite-r5900-n32-v1",
+  "compilerMirror": {
+    "branch": "swiftps2/llvm21/0.4/testing",
+    "commit": "7f9e61af4e66c4d229ad4be5b20e0e30881e22f3",
+    "tag": "swiftps2-llvm21-v0.4.0-testing.4",
+    "tagObject": "6022960fbf0b8eb88e0b4e9795dacd616418955e",
+    "tree": "ec8dd9b45d4075ec55c288bc5a1e744a92f2821a"
+  },
+  "components": {
+    "cmark": {
+      "revision": "0101bf2c6ff6a218f93150f340fe5ccf76d9f3aa"
+    },
+    "llvm": {
+      "revision": "c22862b44982e5c4a3462a78ce6290cbd4ad29bc",
+      "tree": "ec8dd9b45d4075ec55c288bc5a1e744a92f2821a"
+    },
+    "ps2dev": {
+      "revision": "0463697a324b3d3c000636e6fd12324b0f2a8df2"
+    },
+    "ps2sdk": {
+      "revision": "90c492822b1dbc1ac2179a26f83784d895792e6f"
+    },
+    "ps2swift": {
+      "revision": "61602ca90215577f2c8f45a18e55b8ac19c8bf69"
+    },
+    "python": {
+      "archiveSha256": "532645be202d3df8510ab318ca5faed92060a694c8327144e14fa81f31af0f6d",
+      "releaseTag": "20260807"
+    },
+    "rust": {
+      "revision": "ffa80c9a788045048916206d5f1a78643962383b",
+      "tree": "dd233a911ea351bf07d2af8c50fff85162c11130"
+    },
+    "swift": {
+      "revision": "d391f31a2697107d264c2cd253929b8775022cb2",
+      "tree": "ed54700e07f46be0666397be8f1d6be266481d60"
+    }
+  },
+  "evidence": {
+    "sha256": "4c9690d09ab0d9bc2792693d9e6449b6aa531325f391fbbef89963ffba2950c0",
+    "summary": "candidate-unqualified",
+    "url": "https://github.com/OpenCow42/swiftps2lchains/releases/download/0.4.0-testing.4/swiftps2-0.4.0-testing.4-evidence.json"
+  },
+  "hostTriples": [
+    "arm64-apple-macosx13.0"
+  ],
+  "minimumAppVersion": "1.0.0",
+  "package": {
+    "artifactID": "swiftps2-suite",
+    "version": "0.4.0-preview.1"
+  },
+  "packageManifestSha256": "619cede864a21e6512eedaf8458ede039236369f3ad9dd739d8341c8442ed222",
+  "ps2devContractSha256": "39f27a7665df47fef533558e0abaf79fa982686f00f83aa5d77c171e71538440",
+  "qualification": {
+    "caveat": "Public updater test fixture; no emulator or hardware qualification is claimed.",
+    "hardwareQualified": false,
+    "requiredGate": "none-testing-only",
+    "status": "candidate-unqualified"
+  },
+  "releaseNotes": "Swift-owned Moving Colors scene construction and bounded PS2GS Color, Rectangle, and drawRectangle APIs; candidate-unqualified updater fixture only.",
+  "releaseVersion": "0.4.0-testing.4",
+  "rustSDKVersion": "0.1.0",
+  "schemaVersion": 2,
+  "signingKeyID": "swiftps2-testing-1",
+  "sourceArchive": {
+    "bytes": 840445437,
+    "format": "tar.gz",
+    "sha256": "43fce3c2fcc493cc2c8522dd0198c7ad69f8b58c718fe90152cf47209469a811",
+    "url": "https://github.com/OpenCow42/swiftps2lchains/releases/download/0.4.0-testing.4/swiftps2-0.4.0-testing.4-sources.tar.gz"
+  },
+  "suiteVersion": "0.4.0-preview.1",
+  "swiftSDKVersion": "0.3.0",
+  "target": {
+    "abi": "n32",
+    "cpu": "r5900",
+    "elfClass": "ELF32",
+    "endianness": "little",
+    "floatingPointABI": "hard-single",
+    "gprWidth": 64,
+    "integerWidth": 32,
+    "linkage": "static",
+    "pointerWidth": 32,
+    "smallDataThreshold": 0,
+    "triple": "mips64el-scei-ps2"
+  }
+}
