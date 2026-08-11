@@ -33,3 +33,12 @@ jobs:
           jq -e '.properties.schemaVersion.const == 2' schemas/release-manifest-v2.schema.json
       - name: Verify pinned detached Ed25519 signatures
         run: node scripts/verify-channel-signatures.mjs
+
+  public-demo:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the public demo command
+        run: |
+          ./scripts/swiftps2-demo --help
+          xcrun swift tests/test-swiftps2-demo.swift
