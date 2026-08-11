@@ -14,16 +14,25 @@ and ELF corpus complete physical Gate 12 v2. The `preview` channel may only
 reference an emulator-qualified Gate 12 v2 result without a failed
 compiler-quality policy.
 
-Channel and release manifests are signed as their exact UTF-8 bytes with the
-Ed25519 key identified by `swiftps2-release-1`.
+The opt-in `testing` channel exists only for end-to-end swiftPlay2ground update
+testing. It may reference a functional but `candidate-unqualified` suite and
+never represents emulator or hardware qualification. Testing releases use the
+separate `swiftps2-testing-1` trust root, are published as GitHub prereleases,
+and are hidden unless swiftPlay2ground developer mode is enabled.
 
-`channels/stable.json` and `channels/preview.json` are the only mutable release
-pointers. Their detached signatures use the adjacent `.sig` filename. The
-schemas under `schemas/` define the accepted channel and release documents.
-Every referenced archive and release manifest is an immutable GitHub Release
-asset. Each binary release also carries checksums, qualification evidence,
-license notices, and the corresponding locked source/patch material required
-to reconstruct redistributed compiler components.
+Stable and Preview channel and release manifests are signed as their exact
+UTF-8 bytes with the Ed25519 key identified by `swiftps2-release-1`. Testing
+metadata is signed with `swiftps2-testing-1`, so a testing credential cannot
+publish a trusted Stable or Preview pointer.
+
+`channels/stable.json`, `channels/preview.json`, and `channels/testing.json` are
+the only mutable release pointers. Their detached signatures use the adjacent
+`.sig` filename. The schemas under `schemas/` define the accepted channel and
+release documents. Every referenced archive and release manifest is an
+immutable GitHub Release asset. Each binary release also carries checksums,
+qualification evidence or an explicit unqualified-testing notice, license
+notices, and the corresponding locked source/patch material required to
+reconstruct redistributed compiler components.
 
 The empty channel pointers are signed as well. This lets clients distinguish
 an authentic “no release yet” response from unsigned or substituted metadata.

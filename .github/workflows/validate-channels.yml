@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate empty or complete channel pointers
         run: |
-          for channel in stable preview; do
+          for channel in stable preview testing; do
             jq -e --arg channel "$channel" '
               .schemaVersion == 1 and
               .channel == $channel and
@@ -28,6 +28,8 @@ jobs:
               ))
             ' "channels/$channel.json"
           done
+          jq -e '.properties.channel.enum == ["stable", "preview", "testing"]' \
+            schemas/channel-v1.schema.json
           jq -e '.properties.schemaVersion.const == 2' schemas/release-manifest-v2.schema.json
       - name: Verify pinned detached Ed25519 signatures
         run: node scripts/verify-channel-signatures.mjs
