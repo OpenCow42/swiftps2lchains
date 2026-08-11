@@ -55,8 +55,9 @@ jobs:
         run: |
           cd "$SWIFTPS2_CI_CHECKOUT"
           mkdir -p "$SWIFTPS2_CI_CHECKOUT/tmp"
-          export TMPDIR="$SWIFTPS2_CI_CHECKOUT/tmp"
-          ./scripts/swiftps2-demo --profile release-scalar
+          sudo chown -R nobody "$SWIFTPS2_CI_CHECKOUT"
+          sudo -H -u nobody env TMPDIR="$SWIFTPS2_CI_CHECKOUT/tmp" \
+            ./scripts/swiftps2-demo --profile release-scalar
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           cp artifacts/moving-colors.elf artifacts/moving-colors.elf.manifest.json \
             "$GITHUB_WORKSPACE/artifacts/"
