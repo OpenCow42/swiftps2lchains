@@ -44,7 +44,6 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           python3 --version
-          openssl version
           ./scripts/swiftps2-demo --help
           python3 tests/test-swiftps2-demo.py
       - name: Prepare a home-independent public checkout

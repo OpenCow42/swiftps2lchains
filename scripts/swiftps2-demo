@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import plistlib
@@ -18,7 +19,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlparse
 from urllib.request import urlopen
-import hashlib
 
 
 class DemoError(Exception):
@@ -60,7 +60,41 @@ The current Testing channel is candidate-unqualified and makes no emulator or
 hardware qualification claim. PCSX2 and a legally obtained BIOS are separate.
 """
 
-ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
+ED25519_FIELD_PRIME = 2**255 - 19
+ED25519_GROUP_ORDER = 2**252 + 27742317777372353535851937790883648493
+ED25519_D = (-121665 * pow(121666, ED25519_FIELD_PRIME - 2, ED25519_FIELD_PRIME)) % ED25519_FIELD_PRIME
+ED25519_SQRT_MINUS_ONE = pow(2, (ED25519_FIELD_PRIME - 1) // 4, ED25519_FIELD_PRIME)
+ED25519_BASE_Y = (4 * pow(5, ED25519_FIELD_PRIME - 2, ED25519_FIELD_PRIME)) % ED25519_FIELD_PRIME
+ED25519_BASE_X = pow(
+    ((ED25519_BASE_Y * ED25519_BASE_Y - 1)
+    * pow(
+        (ED25519_D * ED25519_BASE_Y * ED25519_BASE_Y + 1) % ED25519_FIELD_PRIME,
+        ED25519_FIELD_PRIME - 2,
+        ED25519_FIELD_PRIME,
+    ))
+    % ED25519_FIELD_PRIME,
+    (ED25519_FIELD_PRIME + 3) // 8,
+    ED25519_FIELD_PRIME,
+)
+if (
+    ED25519_BASE_X * ED25519_BASE_X
+    - (ED25519_BASE_Y * ED25519_BASE_Y - 1)
+    * pow(
+        (ED25519_D * ED25519_BASE_Y * ED25519_BASE_Y + 1) % ED25519_FIELD_PRIME,
+        ED25519_FIELD_PRIME - 2,
+        ED25519_FIELD_PRIME,
+    )
+) % ED25519_FIELD_PRIME:
+    ED25519_BASE_X = (ED25519_BASE_X * ED25519_SQRT_MINUS_ONE) % ED25519_FIELD_PRIME
+if ED25519_BASE_X & 1:
+    ED25519_BASE_X = ED25519_FIELD_PRIME - ED25519_BASE_X
+ED25519_BASE_POINT = (
+    ED25519_BASE_X,
+    ED25519_BASE_Y,
+    1,
+    (ED25519_BASE_X * ED25519_BASE_Y) % ED25519_FIELD_PRIME,
+)
+ED25519_IDENTITY = (0, 1, 1, 0)
 
 
 def repository_root() -> Path:
@@ -145,52 +179,99 @@ def signature_data(encoded: bytes, label: str) -> bytes:
         raise DemoError(f"{label} is not a base64 Ed25519 signature") from error
 
 
-def ed25519_public_key_pem(raw_key: bytes) -> bytes:
-    if len(raw_key) != 32:
-        raise DemoError("invalid raw Ed25519 trust root")
-    der = ED25519_SPKI_PREFIX + raw_key
-    encoded = base64.encodebytes(der).decode("ascii")
-    return (
-        "-----BEGIN PUBLIC KEY-----\n"
-        + encoded
-        + "-----END PUBLIC KEY-----\n"
-    ).encode("ascii")
+def ed25519_add(
+    first: tuple[int, int, int, int],
+    second: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
+    x1, y1, z1, t1 = first
+    x2, y2, z2, t2 = second
+    a = ((y1 - x1) * (y2 - x2)) % ED25519_FIELD_PRIME
+    b = ((y1 + x1) * (y2 + x2)) % ED25519_FIELD_PRIME
+    c = (2 * ED25519_D * t1 * t2) % ED25519_FIELD_PRIME
+    d = (2 * z1 * z2) % ED25519_FIELD_PRIME
+    e = (b - a) % ED25519_FIELD_PRIME
+    f = (d - c) % ED25519_FIELD_PRIME
+    g = (d + c) % ED25519_FIELD_PRIME
+    h = (b + a) % ED25519_FIELD_PRIME
+    return (e * f % ED25519_FIELD_PRIME, g * h % ED25519_FIELD_PRIME,
+            f * g % ED25519_FIELD_PRIME, e * h % ED25519_FIELD_PRIME)
 
 
-def openssl_verifies_ed25519(document: bytes, signature: bytes, raw_key: bytes) -> bool:
-    executable = shutil.which("openssl")
-    if executable is None:
-        raise DemoError("OpenSSL with Ed25519 support is required to verify signed metadata")
+def ed25519_multiply(
+    point: tuple[int, int, int, int],
+    scalar: int,
+) -> tuple[int, int, int, int]:
+    result = ED25519_IDENTITY
+    while scalar:
+        if scalar & 1:
+            result = ed25519_add(result, point)
+        point = ed25519_add(point, point)
+        scalar >>= 1
+    return result
 
-    with tempfile.TemporaryDirectory(prefix="swiftps2-ed25519-") as directory:
-        root = Path(directory)
-        public_key = root / "trust-root.pem"
-        message = root / "document"
-        signature_file = root / "signature"
-        public_key.write_bytes(ed25519_public_key_pem(raw_key))
-        message.write_bytes(document)
-        signature_file.write_bytes(signature)
-        command = [
-            executable,
-            "pkeyutl",
-            "-verify",
-            "-pubin",
-            "-inkey",
-            str(public_key),
-            "-rawin",
-            "-in",
-            str(message),
-            "-sigfile",
-            str(signature_file),
-        ]
-        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        if result.returncode == 0:
-            return True
 
-        # Older OpenSSL releases accepted Ed25519 input without -rawin.
-        fallback = [argument for argument in command if argument != "-rawin"]
-        result = subprocess.run(fallback, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        return result.returncode == 0
+def ed25519_is_identity(point: tuple[int, int, int, int]) -> bool:
+    return point[0] % ED25519_FIELD_PRIME == 0 and (
+        point[1] - point[2]
+    ) % ED25519_FIELD_PRIME == 0
+
+
+def ed25519_encode(point: tuple[int, int, int, int]) -> bytes:
+    inverse_z = pow(point[2], ED25519_FIELD_PRIME - 2, ED25519_FIELD_PRIME)
+    x = point[0] * inverse_z % ED25519_FIELD_PRIME
+    y = point[1] * inverse_z % ED25519_FIELD_PRIME
+    return (y | ((x & 1) << 255)).to_bytes(32, "little")
+
+
+def ed25519_decode(encoded: bytes) -> tuple[int, int, int, int] | None:
+    if len(encoded) != 32:
+        return None
+    encoded_value = int.from_bytes(encoded, "little")
+    sign = encoded_value >> 255
+    y = encoded_value & ((1 << 255) - 1)
+    if y >= ED25519_FIELD_PRIME:
+        return None
+    denominator = (ED25519_D * y * y + 1) % ED25519_FIELD_PRIME
+    if denominator == 0:
+        return None
+    x_squared = (y * y - 1) * pow(
+        denominator, ED25519_FIELD_PRIME - 2, ED25519_FIELD_PRIME
+    ) % ED25519_FIELD_PRIME
+    x = pow(x_squared, (ED25519_FIELD_PRIME + 3) // 8, ED25519_FIELD_PRIME)
+    if x * x % ED25519_FIELD_PRIME != x_squared:
+        x = x * ED25519_SQRT_MINUS_ONE % ED25519_FIELD_PRIME
+    if x * x % ED25519_FIELD_PRIME != x_squared or (x == 0 and sign):
+        return None
+    if x & 1 != sign:
+        x = ED25519_FIELD_PRIME - x
+    return x, y, 1, x * y % ED25519_FIELD_PRIME
+
+
+def ed25519_verifies(document: bytes, signature: bytes, raw_key: bytes) -> bool:
+    if len(signature) != 64 or len(raw_key) != 32:
+        return False
+    encoded_r = signature[:32]
+    r = ed25519_decode(encoded_r)
+    public_key = ed25519_decode(raw_key)
+    scalar = int.from_bytes(signature[32:], "little")
+    if (
+        r is None
+        or public_key is None
+        or scalar >= ED25519_GROUP_ORDER
+        or not ed25519_is_identity(ed25519_multiply(r, ED25519_GROUP_ORDER))
+        or not ed25519_is_identity(
+            ed25519_multiply(public_key, ED25519_GROUP_ORDER)
+        )
+    ):
+        return False
+    challenge = int.from_bytes(
+        hashlib.sha512(encoded_r + raw_key + document).digest(), "little"
+    ) % ED25519_GROUP_ORDER
+    expected = ed25519_encode(ed25519_multiply(ED25519_BASE_POINT, scalar))
+    actual = ed25519_encode(
+        ed25519_add(r, ed25519_multiply(public_key, challenge))
+    )
+    return expected == actual
 
 
 def verify(document: bytes, signature: bytes, public_key_path: Path, label: str) -> None:
@@ -199,7 +280,7 @@ def verify(document: bytes, signature: bytes, public_key_path: Path, label: str)
         raw_key = base64.b64decode(encoded_key.decode("utf-8").strip(), validate=True)
     except (OSError, UnicodeDecodeError, ValueError) as error:
         raise DemoError(f"invalid raw Ed25519 trust root: {public_key_path}") from error
-    if not openssl_verifies_ed25519(document, signature, raw_key):
+    if not ed25519_verifies(document, signature, raw_key):
         raise DemoError(f"{label} Ed25519 signature is invalid")
 
 

@@ -7,15 +7,25 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 SCRIPT = REPOSITORY / "scripts/swiftps2-demo"
-ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
+FIXTURE = Path("/tmp/swiftps2-demo-python-fixture")
+PUBLIC_KEY = "BxNNtE5E2tgRLx484WzH8n6SryrkX20R4VsLjgxAiZM="
+MANIFEST_SIGNATURE = (
+    "7E+0fguu5QtR6zIViJcW5kCQ3Bp3azbbDkXOEQ6zBIZtg1vsfRJR1uLGE7j+bhwkwax"
+    "KyWDIYYMC1yoVepFSCw=="
+)
+CHANNEL_SIGNATURE = (
+    "W4zTLTVOZgACM+ml5KSclokoLPzQbNK0ANsX4lP4/Y7OJxyq53lxUAh/D3PM6yEk/Dxq"
+    "nYBilIOgbpuoeyQXAw=="
+)
+MANIFEST_SHA256 = "a2291ccdb109ab322c3e7cbbd46843759dcc7a157ddf42da35fd790f7fb02d30"
 
 
 class TestFailure(Exception):
@@ -31,42 +41,17 @@ def encoded_json(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
-def run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-
-
-def sign(private_key: Path, message: Path, signature: Path) -> None:
-    command = [
-        "openssl",
-        "pkeyutl",
-        "-sign",
-        "-inkey",
-        str(private_key),
-        "-rawin",
-        "-in",
-        str(message),
-        "-out",
-        str(signature),
-    ]
-    result = run(command)
-    if result.returncode != 0:
-        # Older OpenSSL releases accepted Ed25519 input without -rawin.
-        command.remove("-rawin")
-        result = run(command)
-    if result.returncode != 0:
-        raise TestFailure(f"could not sign the test fixture: {result.stdout}")
-
-
-def write_signature(private_key: Path, document: Path) -> Path:
-    raw_signature = document.with_suffix(document.suffix + ".rawsig")
-    sign(private_key, document, raw_signature)
-    signature = document.with_suffix(document.suffix + ".sig")
-    signature.write_bytes(base64.b64encode(raw_signature.read_bytes()) + b"\n")
-    return signature
-
-
 def run_demo(arguments: list[str]) -> subprocess.CompletedProcess[str]:
-    return run([str(SCRIPT), *arguments])
+    return subprocess.run(
+        [str(SCRIPT), *arguments],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def write_signature(path: Path, signature: str) -> None:
+    path.write_bytes(signature.encode("ascii") + b"\n")
 
 
 def main() -> None:
@@ -75,22 +60,14 @@ def main() -> None:
         "public-demo launcher is not a Python script",
     )
 
-    with tempfile.TemporaryDirectory(prefix="swiftps2-demo-tests-") as directory:
-        fixture = Path(directory)
-        private_key = fixture / "test-private.pem"
-        generated = run(["openssl", "genpkey", "-algorithm", "ED25519", "-out", str(private_key)])
-        require(generated.returncode == 0, f"could not generate Ed25519 fixture key: {generated.stdout}")
-        public_key_der = subprocess.check_output(
-            ["openssl", "pkey", "-in", str(private_key), "-pubout", "-outform", "DER"]
-        )
-        require(
-            public_key_der.startswith(ED25519_SPKI_PREFIX) and len(public_key_der) == 44,
-            "OpenSSL did not produce an Ed25519 public key",
-        )
-        public_key = fixture / "test.pub"
-        public_key.write_bytes(base64.b64encode(public_key_der[-32:]) + b"\n")
+    if FIXTURE.exists():
+        shutil.rmtree(FIXTURE)
+    FIXTURE.mkdir()
+    try:
+        public_key = FIXTURE / "test.pub"
+        public_key.write_bytes(PUBLIC_KEY.encode("ascii") + b"\n")
 
-        manifest = fixture / "release-manifest.json"
+        manifest = FIXTURE / "release-manifest.json"
         manifest.write_bytes(
             encoded_json(
                 {
@@ -98,7 +75,7 @@ def main() -> None:
                         "bytes": 1,
                         "format": "tar.gz",
                         "sha256": "a" * 64,
-                        "url": (fixture / "suite.tar.gz").as_uri(),
+                        "url": (FIXTURE / "suite.tar.gz").as_uri(),
                     },
                     "channel": "testing",
                     "hostTriples": ["arm64-apple-macosx13.0"],
@@ -120,18 +97,27 @@ def main() -> None:
                 }
             )
         )
-        manifest_signature = write_signature(private_key, manifest)
+        require(
+            hashlib.sha256(manifest.read_bytes()).hexdigest() == MANIFEST_SHA256,
+            "offline manifest no longer matches its independent signature",
+        )
+        write_signature(
+            FIXTURE / "release-manifest.json.sig",
+            MANIFEST_SIGNATURE,
+        )
 
-        channel = fixture / "testing.json"
+        channel = FIXTURE / "testing.json"
         channel.write_bytes(
             encoded_json(
                 {
                     "channel": "testing",
                     "generatedAt": "2026-08-11T00:00:00Z",
                     "release": {
-                        "manifestSHA256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
-                        "manifestSignatureURL": manifest_signature.as_uri(),
-                        "manifestURL": manifest.as_uri(),
+                        "manifestSHA256": MANIFEST_SHA256,
+                        "manifestSignatureURL": (
+                            FIXTURE / "release-manifest.json.sig"
+                        ).as_uri(),
+                        "manifestURL": (FIXTURE / "release-manifest.json").as_uri(),
                         "version": "9.9.9-testing.1",
                     },
                     "schemaVersion": 1,
@@ -139,7 +125,8 @@ def main() -> None:
                 }
             )
         )
-        channel_signature = write_signature(private_key, channel)
+        channel_signature = FIXTURE / "testing.json.sig"
+        write_signature(channel_signature, CHANNEL_SIGNATURE)
         arguments = [
             "--channel",
             "testing",
@@ -150,7 +137,10 @@ def main() -> None:
             "--resolve-only",
         ]
         accepted = run_demo(arguments)
-        require(accepted.returncode == 0, f"signed offline fixture was rejected: {accepted.stdout}")
+        require(
+            accepted.returncode == 0,
+            f"signed offline fixture was rejected: {accepted.stdout}",
+        )
         require(
             "Resolved 9.9.9-testing.1" in accepted.stdout,
             "resolved release identity was not printed",
@@ -173,6 +163,8 @@ def main() -> None:
             unsafe_override.returncode != 0,
             "trust-root override without channel override was accepted",
         )
+    finally:
+        shutil.rmtree(FIXTURE, ignore_errors=True)
 
     print("swiftps2-demo Python tests passed")
 

@@ -6,8 +6,8 @@ Releases, not Git history.
 
 ## Build the first Swift demo
 
-On Apple Silicon with macOS 13 or newer, Python 3, OpenSSL with Ed25519
-support, and the Xcode Command Line Tools:
+On Apple Silicon with macOS 13 or newer, Python 3, and the Xcode Command Line
+Tools:
 
 ```sh
 git clone https://github.com/OpenCow42/swiftps2lchains.git
