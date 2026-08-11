@@ -40,11 +40,12 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Check the public demo command
+      - name: Check the Python public demo command
         run: |
           test "$(uname -m)" = arm64
+          python3 --version
           ./scripts/swiftps2-demo --help
-          xcrun swift tests/test-swiftps2-demo.swift
+          python3 tests/test-swiftps2-demo.py
       - name: Prepare a home-independent public checkout
         run: |
           ci_checkout="/tmp/swiftps2lchains-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"

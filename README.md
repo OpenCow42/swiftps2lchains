@@ -6,7 +6,8 @@ Releases, not Git history.
 
 ## Build the first Swift demo
 
-On Apple Silicon with macOS 13 or newer and the Xcode Command Line Tools:
+On Apple Silicon with macOS 13 or newer, Python 3, and the Xcode Command Line
+Tools:
 
 ```sh
 git clone https://github.com/OpenCow42/swiftps2lchains.git
@@ -14,7 +15,8 @@ cd swiftps2lchains
 ./scripts/swiftps2-demo
 ```
 
-The command verifies the Testing channel and release Ed25519 signatures,
+The Python launcher does not invoke the host Swift interpreter. It verifies the
+Testing channel and release Ed25519 signatures,
 downloads and hashes the published self-contained SDK, validates its complete
 internal package manifest, runs its doctor checks, and compiles
 [`examples/moving-colors`](examples/moving-colors). It publishes the audited
