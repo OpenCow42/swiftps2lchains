@@ -1,8 +1,46 @@
 # swiftps2lchains
 
-Signed SwiftPS2 toolchain-suite channel metadata and immutable release assets
-for swiftPlay2ground. Compiler binaries belong in GitHub Releases, not Git
-history.
+Public SwiftPS2 toolchain-suite releases, signed channel metadata, and a
+command-line hello-world workflow. Compiler binaries belong in GitHub
+Releases, not Git history.
+
+## Build the first Swift demo
+
+On Apple Silicon with macOS 13 or newer and the Xcode Command Line Tools:
+
+```sh
+git clone https://github.com/OpenCow42/swiftps2lchains.git
+cd swiftps2lchains
+./scripts/swiftps2-demo
+```
+
+The command verifies the Testing channel and release Ed25519 signatures,
+downloads and hashes the published self-contained SDK, validates its complete
+internal package manifest, runs its doctor checks, and compiles
+[`examples/moving-colors`](examples/moving-colors). It publishes the audited
+result as `artifacts/moving-colors.elf` with its build manifest beside it.
+The SDK and download cache stay under the ignored `.swiftps2/` directory.
+
+PCSX2 and a legally obtained PS2 BIOS remain separate. After configuring the
+BIOS in PCSX2, build and launch the demo with:
+
+```sh
+./scripts/swiftps2-demo --run
+```
+
+Use `--pcsx2 /path/to/PCSX2.app` when auto-discovery cannot find it. Run
+`./scripts/swiftps2-demo --help` for channel, profile, output, and fullscreen
+options.
+
+The current default is the Testing channel because Stable and Preview are
+empty. Testing is deliberately labeled `candidate-unqualified`; it is useful
+for public compiler consumption but makes no emulator, hardware, or
+production-qualification claim.
+
+swiftPlay2ground is a separate private GUI application. This public repository
+does not contain or require its source code.
+
+## Distribution contract
 
 The downloadable suite contains matching Swift, Clang, LLVM, Rust, Cargo,
 Embedded Swift and Rust target runtimes, a locked PS2DEV/PS2SDK/gsKit install,
@@ -14,11 +52,13 @@ and ELF corpus complete physical Gate 12 v2. The `preview` channel may only
 reference an emulator-qualified Gate 12 v2 result without a failed
 compiler-quality policy.
 
-The opt-in `testing` channel exists only for end-to-end swiftPlay2ground update
-testing. It may reference a functional but `candidate-unqualified` suite and
-never represents emulator or hardware qualification. Testing releases use the
-separate `swiftps2-testing-1` trust root, are published as GitHub prereleases,
-and are hidden unless swiftPlay2ground developer mode is enabled.
+The `testing` channel exists for public compiler-consumer and private updater
+integration testing. It may reference a functional but
+`candidate-unqualified` suite and never represents emulator or hardware
+qualification. Testing releases use the separate `swiftps2-testing-1` trust
+root and are published as GitHub prereleases. The private GUI hides this
+channel unless its developer mode is enabled; the public command line labels
+the qualification caveat on every invocation.
 
 Stable and Preview channel and release manifests are signed as their exact
 UTF-8 bytes with the Ed25519 key identified by `swiftps2-release-1`. Testing

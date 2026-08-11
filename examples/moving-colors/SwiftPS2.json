@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "compatibilityID": "swiftps2-embedded-r5900-n32-v1",
+  "name": "moving-colors",
+  "moduleName": "MovingColors",
+  "swiftSources": [
+    "Sources/MovingColors/main.swift"
+  ],
+  "cTargets": [],
+  "sdkModules": [
+    "PS2Kernel",
+    "PS2GS"
+  ],
+  "sdkShims": [
+    "PS2KernelShim",
+    "PS2GSShim"
+  ],
+  "linkerLibraries": [
+    "draw",
+    "graph",
+    "packet",
+    "dma",
+    "debug",
+    "c"
+  ],
+  "hostFSResult": "swiftps2-moving-colors-result.log"
+}

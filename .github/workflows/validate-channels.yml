@@ -33,3 +33,58 @@ jobs:
           jq -e '.properties.schemaVersion.const == 2' schemas/release-manifest-v2.schema.json
       - name: Verify pinned detached Ed25519 signatures
         run: node scripts/verify-channel-signatures.mjs
+
+  public-demo:
+    # The published suite currently contains Apple Silicon host tools only;
+    # fail before downloading if GitHub changes this label's architecture.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the public demo command
+        run: |
+          test "$(uname -m)" = arm64
+          ./scripts/swiftps2-demo --help
+          xcrun swift tests/test-swiftps2-demo.swift
+      - name: Prepare a home-independent public checkout
+        run: |
+          ci_checkout="/tmp/swiftps2lchains-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$ci_checkout"
+          git archive HEAD | tar -x -C "$ci_checkout"
+          echo "SWIFTPS2_CI_CHECKOUT=$ci_checkout" >> "$GITHUB_ENV"
+      - name: Build with the published compiler suite
+        run: |
+          cd "$SWIFTPS2_CI_CHECKOUT"
+          mkdir -p "$SWIFTPS2_CI_CHECKOUT/tmp"
+          sudo chown -R nobody "$SWIFTPS2_CI_CHECKOUT"
+          sudo -H -u nobody env TMPDIR="$SWIFTPS2_CI_CHECKOUT/tmp" \
+            ./scripts/swiftps2-demo --profile release-scalar
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp artifacts/moving-colors.elf artifacts/moving-colors.elf.manifest.json \
+            "$GITHUB_WORKSPACE/artifacts/"
+      - name: Diagnose rejected developer paths
+        if: failure()
+        run: |
+          find "$SWIFTPS2_CI_CHECKOUT/.swiftps2/build" -name '*.elf' -type f -print0 | \
+            while IFS= read -r -d '' elf; do
+              echo "ELF: $elf"
+              strings -a "$elf" | grep -F -C 3 '/Users/runner' || true
+            done
+      - name: Verify the published R5900 ELF
+        run: |
+          test -f artifacts/moving-colors.elf
+          test -f artifacts/moving-colors.elf.manifest.json
+          expected=$(jq -r '.elf.sha256' artifacts/moving-colors.elf.manifest.json)
+          actual=$(shasum -a 256 artifacts/moving-colors.elf | awk '{print $1}')
+          test "$actual" = "$expected"
+          file artifacts/moving-colors.elf | grep -q 'ELF 32-bit LSB executable, MIPS'
+          jq -e '
+            .schemaVersion == 1 and
+            .compilerSuite.qualification == "candidate-unqualified" and
+            .profile == "release-scalar" and
+            .target == {
+              "abi": "n32",
+              "cpu": "r5900",
+              "elfClass": "ELF32",
+              "triple": "mips64el-scei-ps2"
+            }
+          ' artifacts/moving-colors.elf.manifest.json
