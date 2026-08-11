@@ -35,10 +35,32 @@ jobs:
         run: node scripts/verify-channel-signatures.mjs
 
   public-demo:
-    runs-on: macos-14
+    # The published suite currently contains Apple Silicon host tools only.
+    runs-on: macos-14-xlarge
     steps:
       - uses: actions/checkout@v4
       - name: Check the public demo command
         run: |
+          test "$(uname -m)" = arm64
           ./scripts/swiftps2-demo --help
           xcrun swift tests/test-swiftps2-demo.swift
+      - name: Build with the published compiler suite
+        run: ./scripts/swiftps2-demo
+      - name: Verify the published R5900 ELF
+        run: |
+          test -f artifacts/moving-colors.elf
+          test -f artifacts/moving-colors.elf.manifest.json
+          expected=$(jq -r '.elf.sha256' artifacts/moving-colors.elf.manifest.json)
+          actual=$(shasum -a 256 artifacts/moving-colors.elf | awk '{print $1}')
+          test "$actual" = "$expected"
+          file artifacts/moving-colors.elf | grep -q 'ELF 32-bit LSB executable, MIPS'
+          jq -e '
+            .schemaVersion == 1 and
+            .compilerSuite.qualification == "candidate-unqualified" and
+            .target == {
+              "abi": "n32",
+              "cpu": "r5900",
+              "elfClass": "ELF32",
+              "triple": "mips64el-scei-ps2"
+            }
+          ' artifacts/moving-colors.elf.manifest.json
