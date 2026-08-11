@@ -35,8 +35,9 @@ jobs:
         run: node scripts/verify-channel-signatures.mjs
 
   public-demo:
-    # The published suite currently contains Apple Silicon host tools only.
-    runs-on: macos-14-xlarge
+    # The published suite currently contains Apple Silicon host tools only;
+    # fail before downloading if GitHub changes this label's architecture.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Check the public demo command
