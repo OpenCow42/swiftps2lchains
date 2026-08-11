@@ -1,96 +1,45 @@
-#!/usr/bin/env swift
+#!/usr/bin/env python3
 
-import CryptoKit
-import Darwin
-import Foundation
+"""Build and optionally launch the public Moving Colors SwiftPS2 demo."""
 
-private enum DemoError: Error, CustomStringConvertible {
-    case message(String)
+from __future__ import annotations
 
-    var description: String {
-        switch self {
-        case let .message(text): text
-        }
-    }
-}
+import base64
+import json
+import os
+import plistlib
+import shutil
+import subprocess
+import sys
+import tempfile
+import uuid
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any
+from urllib.parse import unquote, urlparse
+from urllib.request import urlopen
+import hashlib
 
-private struct Options {
-    var channel = "testing"
-    var channelURL: URL?
-    var trustRoot: URL?
-    var output: URL?
-    var profile = "debug-emulator"
-    var pcsx2: URL?
-    var launch = false
-    var fullscreen = false
-    var resolveOnly = false
-    var showHelp = false
-}
 
-private struct ChannelDocument: Decodable {
-    struct Release: Decodable {
-        let version: String
-        let manifestURL: String
-        let manifestSignatureURL: String
-        let manifestSHA256: String
-    }
+class DemoError(Exception):
+    """An expected, user-actionable demo failure."""
 
-    let schemaVersion: Int
-    let channel: String
-    let signingKeyID: String
-    let release: Release?
-}
 
-private struct ReleaseManifest: Decodable {
-    struct Archive: Decodable {
-        let url: String
-        let bytes: Int64
-        let sha256: String
-        let format: String
-    }
+@dataclass
+class Options:
+    channel: str = "testing"
+    channel_url: str | None = None
+    trust_root: Path | None = None
+    output: Path | None = None
+    profile: str = "debug-emulator"
+    pcsx2: Path | None = None
+    launch: bool = False
+    fullscreen: bool = False
+    resolve_only: bool = False
+    show_help: bool = False
 
-    struct Qualification: Decodable {
-        let status: String
-        let hardwareQualified: Bool
-        let caveat: String?
-    }
 
-    struct Target: Decodable {
-        let triple: String
-        let cpu: String
-        let abi: String
-        let elfClass: String
-    }
-
-    let schemaVersion: Int
-    let releaseVersion: String
-    let channel: String
-    let signingKeyID: String
-    let archive: Archive
-    let packageManifestSha256: String
-    let qualification: Qualification
-    let hostTriples: [String]
-    let target: Target
-}
-
-private struct BuildManifest: Decodable {
-    struct Artifact: Decodable {
-        let path: String
-        let bytes: Int64
-        let sha256: String
-    }
-
-    let buildID: String
-    let artifacts: [Artifact]
-}
-
-private struct ResolvedRelease {
-    let manifest: ReleaseManifest
-    let workRoot: URL
-}
-
-private let usage = """
-Usage: ./scripts/swiftps2-demo [options]
+USAGE = """Usage: ./scripts/swiftps2-demo [options]
 
 Download and verify a published SwiftPS2 compiler suite, compile the public
 Moving Colors Swift demo, and emit artifacts/moving-colors.elf.
@@ -111,536 +60,636 @@ The current Testing channel is candidate-unqualified and makes no emulator or
 hardware qualification claim. PCSX2 and a legally obtained BIOS are separate.
 """
 
-private func repositoryRoot() -> URL {
-    URL(fileURLWithPath: #filePath)
-        .standardizedFileURL
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-}
+ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 
-private func fileURL(_ value: String) -> URL {
-    if value.hasPrefix("/") {
-        return URL(fileURLWithPath: value).standardizedFileURL
-    }
-    return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent(value)
-        .standardizedFileURL
-}
 
-private func requiredValue(_ arguments: [String], _ index: inout Int, option: String) throws -> String {
+def repository_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def file_path(value: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return Path(os.path.abspath(path))
+
+
+def required_value(arguments: list[str], index: int, option: str) -> tuple[str, int]:
     index += 1
-    guard index < arguments.count else {
-        throw DemoError.message("\(option) requires a value")
-    }
-    return arguments[index]
-}
+    if index >= len(arguments):
+        raise DemoError(f"{option} requires a value")
+    return arguments[index], index
 
-private func parseOptions(_ arguments: [String]) throws -> Options {
-    var result = Options()
-    var index = 1
-    while index < arguments.count {
-        switch arguments[index] {
-        case "--channel":
-            result.channel = try requiredValue(arguments, &index, option: "--channel")
-        case "--channel-url":
-            let value = try requiredValue(arguments, &index, option: "--channel-url")
-            guard let url = URL(string: value), url.scheme != nil else {
-                throw DemoError.message("--channel-url must be an absolute URL")
-            }
-            result.channelURL = url
-        case "--trust-root":
-            result.trustRoot = fileURL(try requiredValue(arguments, &index, option: "--trust-root"))
-        case "--output":
-            result.output = fileURL(try requiredValue(arguments, &index, option: "--output"))
-        case "--profile":
-            result.profile = try requiredValue(arguments, &index, option: "--profile")
-        case "--pcsx2":
-            result.pcsx2 = fileURL(try requiredValue(arguments, &index, option: "--pcsx2"))
-        case "--run":
-            result.launch = true
-        case "--fullscreen":
-            result.fullscreen = true
-            result.launch = true
-        case "--resolve-only":
-            result.resolveOnly = true
-        case "-h", "--help":
-            result.showHelp = true
-        default:
-            throw DemoError.message("unknown option: \(arguments[index])")
-        }
+
+def parse_options(arguments: list[str]) -> Options:
+    result = Options()
+    index = 0
+    while index < len(arguments):
+        option = arguments[index]
+        if option == "--channel":
+            result.channel, index = required_value(arguments, index, option)
+        elif option == "--channel-url":
+            value, index = required_value(arguments, index, option)
+            if not urlparse(value).scheme:
+                raise DemoError("--channel-url must be an absolute URL")
+            result.channel_url = value
+        elif option == "--trust-root":
+            value, index = required_value(arguments, index, option)
+            result.trust_root = file_path(value)
+        elif option == "--output":
+            value, index = required_value(arguments, index, option)
+            result.output = file_path(value)
+        elif option == "--profile":
+            result.profile, index = required_value(arguments, index, option)
+        elif option == "--pcsx2":
+            value, index = required_value(arguments, index, option)
+            result.pcsx2 = file_path(value)
+        elif option == "--run":
+            result.launch = True
+        elif option == "--fullscreen":
+            result.fullscreen = True
+            result.launch = True
+        elif option == "--resolve-only":
+            result.resolve_only = True
+        elif option in ("-h", "--help"):
+            result.show_help = True
+        else:
+            raise DemoError(f"unknown option: {option}")
         index += 1
-    }
 
-    guard ["stable", "preview", "testing"].contains(result.channel) else {
-        throw DemoError.message("--channel must be stable, preview, or testing")
-    }
-    if result.trustRoot != nil, result.channelURL == nil {
-        throw DemoError.message("--trust-root is allowed only with an explicit --channel-url")
-    }
-    guard !result.profile.isEmpty else {
-        throw DemoError.message("--profile cannot be empty")
-    }
+    if result.channel not in {"stable", "preview", "testing"}:
+        raise DemoError("--channel must be stable, preview, or testing")
+    if result.trust_root is not None and result.channel_url is None:
+        raise DemoError("--trust-root is allowed only with an explicit --channel-url")
+    if not result.profile:
+        raise DemoError("--profile cannot be empty")
     return result
-}
 
-private func hexadecimal<D: Sequence>(_ digest: D) -> String where D.Element == UInt8 {
-    digest.map { String(format: "%02x", $0) }.joined()
-}
 
-private func sha256(_ data: Data) -> String {
-    hexadecimal(SHA256.hash(data: data))
-}
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
-private func sha256(_ url: URL) throws -> String {
-    let handle = try FileHandle(forReadingFrom: url)
-    defer { try? handle.close() }
-    var hasher = SHA256()
-    while let chunk = try handle.read(upToCount: 1024 * 1024), !chunk.isEmpty {
-        hasher.update(data: chunk)
-    }
-    return hexadecimal(hasher.finalize())
-}
 
-private func signatureData(_ encoded: Data, label: String) throws -> Data {
-    guard let text = String(data: encoded, encoding: .utf8),
-          let value = Data(base64Encoded: text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-        throw DemoError.message("\(label) is not a base64 Ed25519 signature")
-    }
-    return value
-}
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
-private func verify(document: Data, signature: Data, publicKeyURL: URL, label: String) throws {
-    let encodedKey = try Data(contentsOf: publicKeyURL)
-    guard let keyText = String(data: encodedKey, encoding: .utf8),
-          let keyData = Data(base64Encoded: keyText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-        throw DemoError.message("invalid raw Ed25519 trust root: \(publicKeyURL.path)")
-    }
-    let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: keyData)
-    guard publicKey.isValidSignature(signature, for: document) else {
-        throw DemoError.message("\(label) Ed25519 signature is invalid")
-    }
-}
 
-private func load(_ url: URL, allowLocal: Bool, label: String) throws -> Data {
-    let scheme = url.scheme?.lowercased()
-    guard scheme == "https" || (allowLocal && scheme == "file") else {
-        throw DemoError.message("\(label) must use HTTPS")
-    }
-    do {
-        return try Data(contentsOf: url)
-    } catch {
-        throw DemoError.message("could not load \(label) from \(url.absoluteString): \(error.localizedDescription)")
-    }
-}
+def signature_data(encoded: bytes, label: str) -> bytes:
+    try:
+        return base64.b64decode(encoded.decode("utf-8").strip(), validate=True)
+    except (UnicodeDecodeError, ValueError) as error:
+        raise DemoError(f"{label} is not a base64 Ed25519 signature") from error
 
-private func expectedKeyID(channel: String) -> String {
-    channel == "testing" ? "swiftps2-testing-1" : "swiftps2-release-1"
-}
 
-private func expectedQualification(channel: String) -> (status: String, hardware: Bool) {
-    switch channel {
-    case "stable": ("production-qualified", true)
-    case "preview": ("emulator-qualified, hardware-unqualified", false)
-    default: ("candidate-unqualified", false)
-    }
-}
+def ed25519_public_key_pem(raw_key: bytes) -> bytes:
+    if len(raw_key) != 32:
+        raise DemoError("invalid raw Ed25519 trust root")
+    der = ED25519_SPKI_PREFIX + raw_key
+    encoded = base64.encodebytes(der).decode("ascii")
+    return (
+        "-----BEGIN PUBLIC KEY-----\n"
+        + encoded
+        + "-----END PUBLIC KEY-----\n"
+    ).encode("ascii")
 
-private func signatureURL(adjacentTo document: URL) throws -> URL {
-    guard let result = URL(string: document.absoluteString + ".sig") else {
-        throw DemoError.message("cannot form the channel signature URL")
-    }
-    return result
-}
 
-private func resolveRelease(options: Options, root: URL) throws -> ResolvedRelease {
-    let allowLocal = options.channelURL?.scheme?.lowercased() == "file"
-    if allowLocal && options.trustRoot == nil {
-        throw DemoError.message("file channel URLs require an explicit --trust-root")
-    }
-    let channelURL = options.channelURL ?? URL(
-        string: "https://raw.githubusercontent.com/OpenCow42/swiftps2lchains/main/channels/\(options.channel).json"
-    )!
-    let channelData = try load(channelURL, allowLocal: allowLocal, label: "channel document")
-    let channelSignature = try signatureData(
-        load(try signatureURL(adjacentTo: channelURL), allowLocal: allowLocal, label: "channel signature"),
-        label: "channel signature"
-    )
-    let channel = try JSONDecoder().decode(ChannelDocument.self, from: channelData)
-    let keyID = expectedKeyID(channel: options.channel)
-    guard channel.schemaVersion == 1,
-          channel.channel == options.channel,
-          channel.signingKeyID == keyID else {
-        throw DemoError.message("channel identity does not match the selected channel and pinned key")
-    }
-    let trustRoot = options.trustRoot ?? root.appendingPathComponent("keys/\(keyID).pub")
-    try verify(document: channelData, signature: channelSignature, publicKeyURL: trustRoot, label: "channel")
+def openssl_verifies_ed25519(document: bytes, signature: bytes, raw_key: bytes) -> bool:
+    executable = shutil.which("openssl")
+    if executable is None:
+        raise DemoError("OpenSSL with Ed25519 support is required to verify signed metadata")
 
-    guard let pointer = channel.release else {
-        throw DemoError.message("the signed \(options.channel) channel has no published SDK")
-    }
-    guard let manifestURL = URL(string: pointer.manifestURL),
-          let manifestSignatureURL = URL(string: pointer.manifestSignatureURL) else {
-        throw DemoError.message("the signed channel contains invalid release URLs")
-    }
-    let manifestData = try load(manifestURL, allowLocal: allowLocal, label: "release manifest")
-    guard sha256(manifestData) == pointer.manifestSHA256 else {
-        throw DemoError.message("release manifest SHA-256 does not match the signed channel")
-    }
-    let manifestSignature = try signatureData(
-        load(manifestSignatureURL, allowLocal: allowLocal, label: "release manifest signature"),
-        label: "release manifest signature"
-    )
-    try verify(document: manifestData, signature: manifestSignature, publicKeyURL: trustRoot, label: "release manifest")
-
-    let manifest = try JSONDecoder().decode(ReleaseManifest.self, from: manifestData)
-    let qualification = expectedQualification(channel: options.channel)
-    guard manifest.schemaVersion == 2,
-          manifest.releaseVersion == pointer.version,
-          manifest.channel == options.channel,
-          manifest.signingKeyID == keyID,
-          manifest.qualification.status == qualification.status,
-          manifest.qualification.hardwareQualified == qualification.hardware,
-          manifest.archive.format == "tar.gz",
-          manifest.archive.bytes > 0,
-          manifest.archive.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
-          manifest.packageManifestSha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
-          manifest.target.triple == "mips64el-scei-ps2",
-          manifest.target.cpu == "r5900",
-          manifest.target.abi == "n32",
-          manifest.target.elfClass == "ELF32" else {
-        throw DemoError.message("release manifest violates the SwiftPS2 channel or target contract")
-    }
-    guard let archiveURL = URL(string: manifest.archive.url),
-          archiveURL.scheme?.lowercased() == "https" || allowLocal else {
-        throw DemoError.message("release archive must use HTTPS")
-    }
-    return ResolvedRelease(manifest: manifest, workRoot: root.appendingPathComponent(".swiftps2"))
-}
-
-@discardableResult
-private func run(
-    _ executable: URL,
-    _ arguments: [String],
-    capture: Bool = false,
-    wait: Bool = true
-) throws -> Data {
-    let process = Process()
-    process.executableURL = executable
-    process.arguments = arguments
-    let pipe = capture ? Pipe() : nil
-    if let pipe {
-        process.standardOutput = pipe
-        process.standardError = pipe
-    } else {
-        process.standardOutput = FileHandle.standardOutput
-        process.standardError = FileHandle.standardError
-    }
-    try process.run()
-    guard wait else { return Data() }
-    process.waitUntilExit()
-    let output = pipe?.fileHandleForReading.readDataToEndOfFile() ?? Data()
-    guard process.terminationReason == .exit, process.terminationStatus == 0 else {
-        let detail = String(data: output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let suffix = detail.flatMap { $0.isEmpty ? nil : "\n\($0)" } ?? ""
-        throw DemoError.message(
-            "command failed (\(process.terminationStatus)): \(executable.path)\(suffix)"
-        )
-    }
-    return output
-}
-
-private func ensureSupportedHost(manifest: ReleaseManifest) throws {
-    let architectureData = try run(URL(fileURLWithPath: "/usr/bin/uname"), ["-m"], capture: true)
-    let architecture = String(data: architectureData, encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard architecture == "arm64",
-          manifest.hostTriples.contains("arm64-apple-macosx13.0"),
-          ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 13 else {
-        throw DemoError.message("this published SDK requires Apple Silicon and macOS 13 or newer")
-    }
-}
-
-private func validArchive(_ archive: URL, manifest: ReleaseManifest) throws -> Bool {
-    guard FileManager.default.fileExists(atPath: archive.path) else { return false }
-    let values = try archive.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-    guard values.isRegularFile == true, Int64(values.fileSize ?? -1) == manifest.archive.bytes else { return false }
-    return try sha256(archive) == manifest.archive.sha256
-}
-
-private func downloadArchive(release: ResolvedRelease) throws -> URL {
-    let manager = FileManager.default
-    let manifest = release.manifest
-    let cache = release.workRoot.appendingPathComponent("cache", isDirectory: true)
-    try manager.createDirectory(at: cache, withIntermediateDirectories: true)
-    guard let remote = URL(string: manifest.archive.url), !remote.lastPathComponent.isEmpty else {
-        throw DemoError.message("release archive URL has no filename")
-    }
-    let archive = cache.appendingPathComponent(remote.lastPathComponent)
-    if try validArchive(archive, manifest: manifest) {
-        print("Using verified cached SDK archive: \(archive.path)")
-        return archive
-    }
-    if manager.fileExists(atPath: archive.path) {
-        try manager.removeItem(at: archive)
-    }
-    let partial = archive.appendingPathExtension("part")
-    print("Downloading \(manifest.releaseVersion) SDK (\(manifest.archive.bytes) bytes)…")
-    fflush(stdout)
-    try run(
-        URL(fileURLWithPath: "/usr/bin/curl"),
-        [
-            "--fail", "--location", "--show-error", "--continue-at", "-",
-            "--proto", "=https", "--tlsv1.2", "--output", partial.path,
-            remote.absoluteString,
+    with tempfile.TemporaryDirectory(prefix="swiftps2-ed25519-") as directory:
+        root = Path(directory)
+        public_key = root / "trust-root.pem"
+        message = root / "document"
+        signature_file = root / "signature"
+        public_key.write_bytes(ed25519_public_key_pem(raw_key))
+        message.write_bytes(document)
+        signature_file.write_bytes(signature)
+        command = [
+            executable,
+            "pkeyutl",
+            "-verify",
+            "-pubin",
+            "-inkey",
+            str(public_key),
+            "-rawin",
+            "-in",
+            str(message),
+            "-sigfile",
+            str(signature_file),
         ]
+        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if result.returncode == 0:
+            return True
+
+        # Older OpenSSL releases accepted Ed25519 input without -rawin.
+        fallback = [argument for argument in command if argument != "-rawin"]
+        result = subprocess.run(fallback, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return result.returncode == 0
+
+
+def verify(document: bytes, signature: bytes, public_key_path: Path, label: str) -> None:
+    try:
+        encoded_key = public_key_path.read_bytes()
+        raw_key = base64.b64decode(encoded_key.decode("utf-8").strip(), validate=True)
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise DemoError(f"invalid raw Ed25519 trust root: {public_key_path}") from error
+    if not openssl_verifies_ed25519(document, signature, raw_key):
+        raise DemoError(f"{label} Ed25519 signature is invalid")
+
+
+def load(url: str, allow_local: bool, label: str) -> bytes:
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme != "https" and not (allow_local and scheme == "file"):
+        raise DemoError(f"{label} must use HTTPS")
+    try:
+        if scheme == "file":
+            return Path(unquote(parsed.path)).read_bytes()
+        with urlopen(url) as response:
+            return response.read()
+    except OSError as error:
+        raise DemoError(
+            f"could not load {label} from {url}: {error}"
+        ) from error
+
+
+def expected_key_id(channel: str) -> str:
+    return "swiftps2-testing-1" if channel == "testing" else "swiftps2-release-1"
+
+
+def expected_qualification(channel: str) -> tuple[str, bool]:
+    if channel == "stable":
+        return "production-qualified", True
+    if channel == "preview":
+        return "emulator-qualified, hardware-unqualified", False
+    return "candidate-unqualified", False
+
+
+def signature_url(document_url: str) -> str:
+    return document_url + ".sig"
+
+
+@dataclass(frozen=True)
+class ResolvedRelease:
+    manifest: dict[str, Any]
+    work_root: Path
+
+
+def resolve_release(options: Options, root: Path) -> ResolvedRelease:
+    allow_local = (
+        options.channel_url is not None
+        and urlparse(options.channel_url).scheme.lower() == "file"
     )
-    guard try validArchive(partial, manifest: manifest) else {
-        try? manager.removeItem(at: partial)
-        throw DemoError.message("downloaded SDK archive size or SHA-256 is invalid")
-    }
-    try manager.moveItem(at: partial, to: archive)
+    if allow_local and options.trust_root is None:
+        raise DemoError("file channel URLs require an explicit --trust-root")
+    channel_url = options.channel_url or (
+        "https://raw.githubusercontent.com/OpenCow42/swiftps2lchains/main/"
+        f"channels/{options.channel}.json"
+    )
+    channel_data = load(channel_url, allow_local, "channel document")
+    channel_signature = signature_data(
+        load(signature_url(channel_url), allow_local, "channel signature"),
+        "channel signature",
+    )
+    try:
+        channel = json.loads(channel_data)
+    except json.JSONDecodeError as error:
+        raise DemoError("channel document is not valid JSON") from error
+    key_id = expected_key_id(options.channel)
+    if not (
+        channel.get("schemaVersion") == 1
+        and channel.get("channel") == options.channel
+        and channel.get("signingKeyID") == key_id
+    ):
+        raise DemoError(
+            "channel identity does not match the selected channel and pinned key"
+        )
+    trust_root = options.trust_root or root / "keys" / f"{key_id}.pub"
+    verify(channel_data, channel_signature, trust_root, "channel")
+
+    pointer = channel.get("release")
+    if not pointer:
+        raise DemoError(f"the signed {options.channel} channel has no published SDK")
+    manifest_url = pointer.get("manifestURL")
+    manifest_signature_url = pointer.get("manifestSignatureURL")
+    if not isinstance(manifest_url, str) or not isinstance(manifest_signature_url, str):
+        raise DemoError("the signed channel contains invalid release URLs")
+    manifest_data = load(manifest_url, allow_local, "release manifest")
+    if sha256(manifest_data) != pointer.get("manifestSHA256"):
+        raise DemoError("release manifest SHA-256 does not match the signed channel")
+    manifest_signature = signature_data(
+        load(manifest_signature_url, allow_local, "release manifest signature"),
+        "release manifest signature",
+    )
+    verify(manifest_data, manifest_signature, trust_root, "release manifest")
+    try:
+        manifest = json.loads(manifest_data)
+    except json.JSONDecodeError as error:
+        raise DemoError("release manifest is not valid JSON") from error
+
+    qualification_status, hardware_qualified = expected_qualification(options.channel)
+    archive = manifest.get("archive", {})
+    target = manifest.get("target", {})
+    qualification = manifest.get("qualification", {})
+    expected_fields = (
+        manifest.get("schemaVersion") == 2,
+        manifest.get("releaseVersion") == pointer.get("version"),
+        manifest.get("channel") == options.channel,
+        manifest.get("signingKeyID") == key_id,
+        qualification.get("status") == qualification_status,
+        qualification.get("hardwareQualified") == hardware_qualified,
+        archive.get("format") == "tar.gz",
+        isinstance(archive.get("bytes"), int) and archive["bytes"] > 0,
+        isinstance(archive.get("sha256"), str)
+        and len(archive["sha256"]) == 64
+        and all(character in "0123456789abcdef" for character in archive["sha256"]),
+        isinstance(manifest.get("packageManifestSha256"), str)
+        and len(manifest["packageManifestSha256"]) == 64
+        and all(
+            character in "0123456789abcdef"
+            for character in manifest["packageManifestSha256"]
+        ),
+        target.get("triple") == "mips64el-scei-ps2",
+        target.get("cpu") == "r5900",
+        target.get("abi") == "n32",
+        target.get("elfClass") == "ELF32",
+    )
+    if not all(expected_fields):
+        raise DemoError("release manifest violates the SwiftPS2 channel or target contract")
+    archive_url = archive.get("url")
+    if not isinstance(archive_url, str) or (
+        urlparse(archive_url).scheme.lower() != "https" and not allow_local
+    ):
+        raise DemoError("release archive must use HTTPS")
+    return ResolvedRelease(manifest=manifest, work_root=root / ".swiftps2")
+
+
+def run(
+    executable: Path | str,
+    arguments: list[str],
+    capture: bool = False,
+    wait: bool = True,
+) -> bytes:
+    command = [os.fspath(executable), *arguments]
+    try:
+        if capture:
+            result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            output = result.stdout
+            return_code = result.returncode
+        else:
+            process = subprocess.Popen(command)
+            if not wait:
+                return b""
+            return_code = process.wait()
+            output = b""
+    except OSError as error:
+        raise DemoError(f"could not run {executable}: {error}") from error
+    if return_code != 0:
+        detail = output.decode("utf-8", errors="replace").strip()
+        suffix = f"\n{detail}" if detail else ""
+        raise DemoError(f"command failed ({return_code}): {executable}{suffix}")
+    return output
+
+
+def ensure_supported_host(manifest: dict[str, Any]) -> None:
+    architecture = run(Path("/usr/bin/uname"), ["-m"], capture=True).decode().strip()
+    host_triples = manifest.get("hostTriples", [])
+    major_version = int(os.uname().release.split(".", maxsplit=1)[0])
+    # Darwin 22 corresponds to macOS 13. The host check intentionally accepts
+    # later macOS releases, as the Swift implementation did.
+    if not (
+        architecture == "arm64"
+        and "arm64-apple-macosx13.0" in host_triples
+        and major_version >= 22
+    ):
+        raise DemoError("this published SDK requires Apple Silicon and macOS 13 or newer")
+
+
+def valid_archive(archive: Path, manifest: dict[str, Any]) -> bool:
+    try:
+        return (
+            archive.is_file()
+            and archive.stat().st_size == manifest["archive"]["bytes"]
+            and sha256_file(archive) == manifest["archive"]["sha256"]
+        )
+    except OSError:
+        return False
+
+
+def download_archive(release: ResolvedRelease) -> Path:
+    manifest = release.manifest
+    cache = release.work_root / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    remote = manifest["archive"]["url"]
+    remote_name = PurePosixPath(urlparse(remote).path).name
+    if not remote_name:
+        raise DemoError("release archive URL has no filename")
+    archive = cache / remote_name
+    if valid_archive(archive, manifest):
+        print(f"Using verified cached SDK archive: {archive}")
+        return archive
+    if archive.exists():
+        archive.unlink()
+    partial = archive.with_name(archive.name + ".part")
+    print(
+        f"Downloading {manifest['releaseVersion']} SDK "
+        f"({manifest['archive']['bytes']} bytes)…",
+        flush=True,
+    )
+    run(
+        Path("/usr/bin/curl"),
+        [
+            "--fail",
+            "--location",
+            "--show-error",
+            "--continue-at",
+            "-",
+            "--proto",
+            "=https",
+            "--tlsv1.2",
+            "--output",
+            str(partial),
+            remote,
+        ],
+    )
+    if not valid_archive(partial, manifest):
+        partial.unlink(missing_ok=True)
+        raise DemoError("downloaded SDK archive size or SHA-256 is invalid")
+    os.replace(partial, archive)
     return archive
-}
 
-private func contained(_ candidate: URL, by root: URL) -> Bool {
-    let rootComponents = root.standardizedFileURL.pathComponents
-    let candidateComponents = candidate.standardizedFileURL.pathComponents
-    return candidateComponents.count >= rootComponents.count &&
-        Array(candidateComponents.prefix(rootComponents.count)) == rootComponents
-}
 
-private func validateSuite(_ suite: URL, manifest: ReleaseManifest) throws {
-    let manager = FileManager.default
-    let packageManifest = suite.appendingPathComponent("share/swiftps2-suite/package-manifest.json")
-    guard manager.fileExists(atPath: packageManifest.path),
-          try sha256(packageManifest) == manifest.packageManifestSha256 else {
-        throw DemoError.message("installed suite package manifest does not match the signed release")
-    }
-    let swiftps2 = suite.appendingPathComponent("bin/swiftps2")
-    guard manager.isExecutableFile(atPath: swiftps2.path) else {
-        throw DemoError.message("installed suite is missing its validated entry points")
-    }
-    try run(swiftps2, ["doctor"])
-}
+def contained(candidate: Path, root: Path) -> bool:
+    candidate_path = os.path.abspath(candidate)
+    root_path = os.path.abspath(root)
+    try:
+        return os.path.commonpath([candidate_path, root_path]) == root_path
+    except ValueError:
+        return False
 
-private func installedSuite(in releaseRoot: URL) throws -> URL? {
-    let manager = FileManager.default
-    guard manager.fileExists(atPath: releaseRoot.path) else { return nil }
-    let entries = try manager.contentsOfDirectory(
-        at: releaseRoot,
-        includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-        options: [.skipsHiddenFiles]
-    )
-    let suites = try entries.filter { entry in
-        let values = try entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        return values.isDirectory == true && values.isSymbolicLink != true &&
-            manager.isExecutableFile(atPath: entry.appendingPathComponent("bin/swiftps2").path)
-    }
-    guard suites.count <= 1 else {
-        throw DemoError.message("installed release contains multiple suite roots: \(releaseRoot.path)")
-    }
-    return suites.first
-}
 
-private func installSuite(release: ResolvedRelease, archive: URL) throws -> URL {
-    let manager = FileManager.default
-    let releases = release.workRoot.appendingPathComponent("suites", isDirectory: true)
-    let releaseRoot = releases.appendingPathComponent(release.manifest.releaseVersion, isDirectory: true)
-    if let existing = try installedSuite(in: releaseRoot) {
-        try validateSuite(existing, manifest: release.manifest)
-        print("Using installed SDK: \(existing.path)")
+def validate_suite(suite: Path, manifest: dict[str, Any]) -> None:
+    package_manifest = suite / "share/swiftps2-suite/package-manifest.json"
+    if not (
+        package_manifest.is_file()
+        and sha256_file(package_manifest) == manifest["packageManifestSha256"]
+    ):
+        raise DemoError("installed suite package manifest does not match the signed release")
+    swiftps2 = suite / "bin/swiftps2"
+    if not os.access(swiftps2, os.X_OK):
+        raise DemoError("installed suite is missing its validated entry points")
+    run(swiftps2, ["doctor"])
+
+
+def installed_suite(release_root: Path) -> Path | None:
+    if not release_root.exists():
+        return None
+    suites = [
+        entry
+        for entry in release_root.iterdir()
+        if entry.is_dir()
+        and not entry.is_symlink()
+        and os.access(entry / "bin/swiftps2", os.X_OK)
+    ]
+    if len(suites) > 1:
+        raise DemoError(
+            f"installed release contains multiple suite roots: {release_root}"
+        )
+    return suites[0] if suites else None
+
+
+def install_suite(release: ResolvedRelease, archive: Path) -> Path:
+    releases = release.work_root / "suites"
+    release_root = releases / release.manifest["releaseVersion"]
+    existing = installed_suite(release_root)
+    if existing is not None:
+        validate_suite(existing, release.manifest)
+        print(f"Using installed SDK: {existing}")
         return existing
-    }
-    if manager.fileExists(atPath: releaseRoot.path) {
-        throw DemoError.message("incomplete SDK install exists at \(releaseRoot.path); remove that generated directory and retry")
-    }
+    if release_root.exists():
+        raise DemoError(
+            f"incomplete SDK install exists at {release_root}; "
+            "remove that generated directory and retry"
+        )
 
-    let staging = release.workRoot
-        .appendingPathComponent("staging", isDirectory: true)
-        .appendingPathComponent(UUID().uuidString, isDirectory: true)
-    try manager.createDirectory(at: staging, withIntermediateDirectories: true)
-    defer { try? manager.removeItem(at: staging) }
-    print("Extracting and validating the signed SDK…")
-    fflush(stdout)
-    try run(URL(fileURLWithPath: "/usr/bin/tar"), ["-xpzf", archive.path, "-C", staging.path])
-    let roots = try manager.contentsOfDirectory(
-        at: staging,
-        includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-        options: [.skipsHiddenFiles]
-    )
-    guard roots.count == 1 else {
-        throw DemoError.message("SDK archive must contain exactly one top-level suite")
-    }
-    let suite = roots[0]
-    let values = try suite.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-    guard values.isDirectory == true, values.isSymbolicLink != true, contained(suite, by: staging) else {
-        throw DemoError.message("SDK archive has an unsafe top-level suite")
-    }
-    try validateSuite(suite, manifest: release.manifest)
+    staging = release.work_root / "staging" / str(uuid.uuid4())
+    staging.mkdir(parents=True)
+    try:
+        print("Extracting and validating the signed SDK…", flush=True)
+        run(Path("/usr/bin/tar"), ["-xpzf", str(archive), "-C", str(staging)])
+        roots = [entry for entry in staging.iterdir() if not entry.name.startswith(".")]
+        if len(roots) != 1:
+            raise DemoError("SDK archive must contain exactly one top-level suite")
+        suite = roots[0]
+        if not (
+            suite.is_dir()
+            and not suite.is_symlink()
+            and contained(suite, staging)
+        ):
+            raise DemoError("SDK archive has an unsafe top-level suite")
+        validate_suite(suite, release.manifest)
+        release_root.mkdir(parents=True)
+        destination = release_root / suite.name
+        shutil.move(str(suite), str(destination))
+        print(f"Installed SDK: {destination}")
+        return destination
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
-    try manager.createDirectory(at: releaseRoot, withIntermediateDirectories: true)
-    let destination = releaseRoot.appendingPathComponent(suite.lastPathComponent, isDirectory: true)
-    try manager.moveItem(at: suite, to: destination)
-    print("Installed SDK: \(destination.path)")
-    return destination
-}
 
-private func buildDemo(options: Options, root: URL, release: ResolvedRelease, suite: URL) throws -> URL {
-    let package = root.appendingPathComponent("examples/moving-colors", isDirectory: true)
-    let buildRoot = release.workRoot
-        .appendingPathComponent("build/moving-colors/\(options.profile)", isDirectory: true)
-    let swiftps2 = suite.appendingPathComponent("bin/swiftps2")
-    print("Building Moving Colors with the published Swift compiler…")
-    fflush(stdout)
-    try run(
+def write_atomically(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+
+def build_demo(
+    options: Options,
+    root: Path,
+    release: ResolvedRelease,
+    suite: Path,
+) -> Path:
+    package = root / "examples/moving-colors"
+    build_root = release.work_root / "build/moving-colors" / options.profile
+    swiftps2 = suite / "bin/swiftps2"
+    print("Building Moving Colors with the published Swift compiler…", flush=True)
+    run(
         swiftps2,
         [
-            "build", "--language", "swift", "--package", package.path,
-            "--profile", options.profile, "--output", buildRoot.path,
-        ]
-    )
-
-    let manifestURL = buildRoot.appendingPathComponent("manifest.json")
-    let manifestData = try Data(contentsOf: manifestURL)
-    let buildManifest = try JSONDecoder().decode(BuildManifest.self, from: manifestData)
-    let records = buildManifest.artifacts.filter { $0.path.hasSuffix(".elf") }
-    guard records.count == 1 else {
-        throw DemoError.message("build manifest must contain exactly one ELF")
-    }
-    let record = records[0]
-    let builtELF = buildRoot.appendingPathComponent(record.path).standardizedFileURL
-    guard contained(builtELF, by: buildRoot),
-          FileManager.default.fileExists(atPath: builtELF.path),
-          Int64((try builtELF.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? -1) == record.bytes,
-          try sha256(builtELF) == record.sha256 else {
-        throw DemoError.message("built ELF does not match its audited build manifest")
-    }
-
-    let output = options.output ?? root.appendingPathComponent("artifacts/moving-colors.elf")
-    try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try Data(contentsOf: builtELF).write(to: output, options: .atomic)
-    let publishedManifest = output.appendingPathExtension("manifest.json")
-    var publishedManifestData = try JSONSerialization.data(
-        withJSONObject: [
-            "schemaVersion": 1,
-            "buildID": buildManifest.buildID,
-            "sourcePackage": "examples/moving-colors",
-            "profile": options.profile,
-            "compilerSuite": [
-                "releaseVersion": release.manifest.releaseVersion,
-                "qualification": release.manifest.qualification.status,
-                "archiveSHA256": release.manifest.archive.sha256,
-            ],
-            "target": [
-                "triple": release.manifest.target.triple,
-                "cpu": release.manifest.target.cpu,
-                "abi": release.manifest.target.abi,
-                "elfClass": release.manifest.target.elfClass,
-            ],
-            "elf": [
-                "path": output.lastPathComponent,
-                "bytes": record.bytes,
-                "sha256": record.sha256,
-            ],
-            "sourceBuildManifestSHA256": sha256(manifestData),
+            "build",
+            "--language",
+            "swift",
+            "--package",
+            str(package),
+            "--profile",
+            options.profile,
+            "--output",
+            str(build_root),
         ],
-        options: [.prettyPrinted, .sortedKeys]
     )
-    publishedManifestData.append(0x0a)
-    try publishedManifestData.write(to: publishedManifest, options: .atomic)
-    print("Published ELF: \(output.path)")
-    print("ELF SHA-256: \(record.sha256)")
-    print("Build manifest: \(publishedManifest.path)")
-    return output
-}
-
-private func pcsx2Application(containing url: URL) -> URL? {
-    var candidate = url.standardizedFileURL
-    while candidate.path != "/" {
-        if candidate.pathExtension == "app" { return candidate }
-        candidate.deleteLastPathComponent()
-    }
-    return nil
-}
-
-private func discoverPCSX2(options: Options) throws -> URL {
-    if let explicit = options.pcsx2 { return explicit }
-    for key in ["PCSX2_EXECUTABLE", "PCSX2"] {
-        if let value = ProcessInfo.processInfo.environment[key], !value.isEmpty {
-            return fileURL(value)
-        }
-    }
-    let manager = FileManager.default
-    let roots = [
-        URL(fileURLWithPath: "/Applications", isDirectory: true),
-        manager.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true),
+    manifest_path = build_root / "manifest.json"
+    try:
+        manifest_data = manifest_path.read_bytes()
+        build_manifest = json.loads(manifest_data)
+    except (OSError, json.JSONDecodeError) as error:
+        raise DemoError(f"could not read build manifest: {manifest_path}") from error
+    records = [
+        record
+        for record in build_manifest.get("artifacts", [])
+        if isinstance(record, dict) and str(record.get("path", "")).endswith(".elf")
     ]
-    for root in roots {
-        guard let entries = try? manager.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { continue }
-        if let application = entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).first(where: {
-            $0.pathExtension == "app" &&
-                (Bundle(url: $0)?.bundleIdentifier == "net.pcsx2.pcsx2" ||
-                    $0.lastPathComponent.lowercased().contains("pcsx2"))
-        }) {
-            return application
-        }
-    }
-    throw DemoError.message("PCSX2 was not found; install it or pass --pcsx2 PATH")
-}
-
-private func launchPCSX2(options: Options, elf: URL) throws {
-    let selection = try discoverPCSX2(options: options)
-    let application = selection.pathExtension == "app" ? selection : pcsx2Application(containing: selection)
-    var arguments = ["-batch"]
-    if options.fullscreen { arguments.append("-fullscreen") }
-    arguments.append(contentsOf: ["-earlyconsolelog", "-elf", elf.path])
-    if let application {
-        try run(
-            URL(fileURLWithPath: "/usr/bin/open"),
-            ["-na", application.path, "--args"] + arguments
+    if len(records) != 1:
+        raise DemoError("build manifest must contain exactly one ELF")
+    record = records[0]
+    built_elf = Path(os.path.abspath(build_root / record["path"]))
+    try:
+        valid_elf = (
+            contained(built_elf, build_root)
+            and built_elf.is_file()
+            and built_elf.stat().st_size == record["bytes"]
+            and sha256_file(built_elf) == record["sha256"]
         )
-        print("Launched PCSX2: \(application.path)")
-    } else {
-        guard FileManager.default.isExecutableFile(atPath: selection.path) else {
-            throw DemoError.message("PCSX2 is not executable: \(selection.path)")
-        }
-        try run(selection, arguments, wait: false)
-        print("Launched PCSX2: \(selection.path)")
-    }
-}
+    except (KeyError, OSError):
+        valid_elf = False
+    if not valid_elf:
+        raise DemoError("built ELF does not match its audited build manifest")
 
-private func main() throws {
-    let options = try parseOptions(CommandLine.arguments)
-    if options.showHelp {
-        print(usage)
+    output = options.output or root / "artifacts/moving-colors.elf"
+    write_atomically(output, built_elf.read_bytes())
+    published_manifest = output.with_name(output.name + ".manifest.json")
+    published = {
+        "schemaVersion": 1,
+        "buildID": build_manifest["buildID"],
+        "sourcePackage": "examples/moving-colors",
+        "profile": options.profile,
+        "compilerSuite": {
+            "releaseVersion": release.manifest["releaseVersion"],
+            "qualification": release.manifest["qualification"]["status"],
+            "archiveSHA256": release.manifest["archive"]["sha256"],
+        },
+        "target": {
+            "triple": release.manifest["target"]["triple"],
+            "cpu": release.manifest["target"]["cpu"],
+            "abi": release.manifest["target"]["abi"],
+            "elfClass": release.manifest["target"]["elfClass"],
+        },
+        "elf": {
+            "path": output.name,
+            "bytes": record["bytes"],
+            "sha256": record["sha256"],
+        },
+        "sourceBuildManifestSHA256": sha256(manifest_data),
+    }
+    write_atomically(
+        published_manifest,
+        (json.dumps(published, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    )
+    print(f"Published ELF: {output}")
+    print(f"ELF SHA-256: {record['sha256']}")
+    print(f"Build manifest: {published_manifest}")
+    return output
+
+
+def pcsx2_application_containing(path: Path) -> Path | None:
+    candidate = Path(os.path.abspath(path))
+    while candidate != candidate.parent:
+        if candidate.suffix == ".app":
+            return candidate
+        candidate = candidate.parent
+    return None
+
+
+def pcsx2_bundle_matches(application: Path) -> bool:
+    if "pcsx2" in application.name.lower():
+        return True
+    try:
+        with (application / "Contents/Info.plist").open("rb") as handle:
+            return plistlib.load(handle).get("CFBundleIdentifier") == "net.pcsx2.pcsx2"
+    except (OSError, plistlib.InvalidFileException):
+        return False
+
+
+def discover_pcsx2(options: Options) -> Path:
+    if options.pcsx2 is not None:
+        return options.pcsx2
+    for key in ("PCSX2_EXECUTABLE", "PCSX2"):
+        value = os.environ.get(key)
+        if value:
+            return file_path(value)
+    roots = [Path("/Applications"), Path.home() / "Applications"]
+    for root in roots:
+        try:
+            applications = sorted(root.iterdir(), key=lambda item: item.name)
+        except OSError:
+            continue
+        for application in applications:
+            if application.suffix == ".app" and pcsx2_bundle_matches(application):
+                return application
+    raise DemoError("PCSX2 was not found; install it or pass --pcsx2 PATH")
+
+
+def launch_pcsx2(options: Options, elf: Path) -> None:
+    selection = discover_pcsx2(options)
+    application = (
+        selection if selection.suffix == ".app" else pcsx2_application_containing(selection)
+    )
+    arguments = ["-batch"]
+    if options.fullscreen:
+        arguments.append("-fullscreen")
+    arguments.extend(["-earlyconsolelog", "-elf", str(elf)])
+    if application is not None:
+        run(Path("/usr/bin/open"), ["-na", str(application), "--args", *arguments])
+        print(f"Launched PCSX2: {application}")
+    else:
+        if not os.access(selection, os.X_OK):
+            raise DemoError(f"PCSX2 is not executable: {selection}")
+        run(selection, arguments, wait=False)
+        print(f"Launched PCSX2: {selection}")
+
+
+def main() -> None:
+    options = parse_options(sys.argv[1:])
+    if options.show_help:
+        print(USAGE)
         return
-    }
-    let root = repositoryRoot()
-    let release = try resolveRelease(options: options, root: root)
-    print("Resolved \(release.manifest.releaseVersion) from the signed \(options.channel) channel")
-    print("Qualification: \(release.manifest.qualification.status)")
-    if let caveat = release.manifest.qualification.caveat, !caveat.isEmpty {
-        print("Caveat: \(caveat)")
-    }
-    fflush(stdout)
-    if options.resolveOnly { return }
+    root = repository_root()
+    release = resolve_release(options, root)
+    print(
+        f"Resolved {release.manifest['releaseVersion']} "
+        f"from the signed {options.channel} channel"
+    )
+    print(f"Qualification: {release.manifest['qualification']['status']}")
+    caveat = release.manifest["qualification"].get("caveat")
+    if caveat:
+        print(f"Caveat: {caveat}")
+    if options.resolve_only:
+        return
 
-    try ensureSupportedHost(manifest: release.manifest)
-    let archive = try downloadArchive(release: release)
-    let suite = try installSuite(release: release, archive: archive)
-    let elf = try buildDemo(options: options, root: root, release: release, suite: suite)
-    if options.launch {
-        try launchPCSX2(options: options, elf: elf)
-    }
-}
+    ensure_supported_host(release.manifest)
+    archive = download_archive(release)
+    suite = install_suite(release, archive)
+    elf = build_demo(options, root, release, suite)
+    if options.launch:
+        launch_pcsx2(options, elf)
 
-do {
-    try main()
-} catch {
-    fputs("swiftps2-demo: \(error)\n", stderr)
-    exit(2)
-}
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (DemoError, OSError, ValueError, KeyError) as error:
+        print(f"swiftps2-demo: {error}", file=sys.stderr)
+        sys.exit(2)
