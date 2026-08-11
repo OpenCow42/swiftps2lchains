@@ -54,7 +54,7 @@ jobs:
       - name: Build with the published compiler suite
         run: |
           cd "$SWIFTPS2_CI_CHECKOUT"
-          ./scripts/swiftps2-demo
+          ./scripts/swiftps2-demo --profile release-scalar
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           cp artifacts/moving-colors.elf artifacts/moving-colors.elf.manifest.json \
             "$GITHUB_WORKSPACE/artifacts/"
@@ -69,6 +69,7 @@ jobs:
           jq -e '
             .schemaVersion == 1 and
             .compilerSuite.qualification == "candidate-unqualified" and
+            .profile == "release-scalar" and
             .target == {
               "abi": "n32",
               "cpu": "r5900",
