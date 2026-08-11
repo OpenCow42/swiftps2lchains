@@ -28,6 +28,6 @@ jobs:
               ))
             ' "channels/$channel.json"
           done
-      - name: Require detached signatures after key bootstrap
-        if: ${{ vars.SWIFTPS2_SIGNING_ENABLED == 'true' }}
-        run: test -s channels/stable.json.sig && test -s channels/preview.json.sig
+          jq -e '.properties.schemaVersion.const == 2' schemas/release-manifest-v2.schema.json
+      - name: Verify pinned detached Ed25519 signatures
+        run: node scripts/verify-channel-signatures.mjs
